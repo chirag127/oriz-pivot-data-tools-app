@@ -1,5 +1,6 @@
 ---
 import '~/styles/global.css'
+import { pricingUrl } from '@chirag127/astro-shell/pricing-url'
 
 interface Props {
   title?: string
@@ -8,6 +9,7 @@ interface Props {
 
 const { title = 'Oriz Pivot — Spreadsheets without uploading them.', description = 'CSV / JSON / Excel / TSV / YAML. Sort, filter, group, pivot, aggregate, dedupe, type-coerce. Chart with ECharts.' } = Astro.props
 const canonical = new URL(Astro.url.pathname, 'https://data.oriz.in').toString()
+const pricingHref = pricingUrl('oriz-pivot-data-tools-app')
 ---
 <!doctype html>
 <html lang="en">
@@ -34,8 +36,8 @@ const canonical = new URL(Astro.url.pathname, 'https://data.oriz.in').toString()
       <nav>
         <a href="/">tools</a>
         <a href="/about/">about</a>
-        <a href="/pricing/">pricing</a>
-        <a href="https://auth.oriz.in/sign-in">sign in</a>
+        <a href={pricingHref}>pricing</a>
+        <a href="https://account.oriz.in/sign-in">sign in</a>
       </nav>
     </header>
     <main id="main"><slot /></main>
