@@ -1,6 +1,7 @@
 ---
 import '~/styles/global.css'
 import { pricingUrl } from '@chirag127/astro-shell/pricing-url'
+import FamilySidebar from '@chirag127/astro-shell/components/FamilySidebar.astro'
 
 interface Props {
   title?: string
@@ -40,7 +41,27 @@ const pricingHref = pricingUrl('oriz-pivot-data-tools-app')
         <a href="https://account.oriz.in/sign-in">sign in</a>
       </nav>
     </header>
-    <main id="main"><slot /></main>
+    <div class="oriz-shell">
+      <FamilySidebar slug="oriz-pivot-data-tools-app" title="Pivot Tools">
+        <a slot="tools" href="/tools/aggregate/">Aggregate</a>
+        <a slot="tools" href="/tools/chart/">Chart</a>
+        <a slot="tools" href="/tools/coerce/">Type Coerce</a>
+        <a slot="tools" href="/tools/column-extractor/">Column Extractor</a>
+        <a slot="tools" href="/tools/csv-json/">CSV → JSON</a>
+        <a slot="tools" href="/tools/csv-viewer/">CSV Viewer</a>
+        <a slot="tools" href="/tools/dedupe/">Deduplicate</a>
+        <a slot="tools" href="/tools/excel/">CSV ↔ Excel</a>
+        <a slot="tools" href="/tools/group/">Group By</a>
+        <a slot="tools" href="/tools/json-csv/">JSON → CSV</a>
+        <a slot="tools" href="/tools/json-query/">JSON Query</a>
+        <a slot="tools" href="/tools/pivot/">Pivot Table</a>
+        <a slot="tools" href="/tools/rename/">Rename Columns</a>
+        <a slot="tools" href="/tools/sort-filter/">Sort &amp; Filter</a>
+        <a slot="tools" href="/tools/stats/">Stats</a>
+        <a slot="tools" href="/tools/tsv-yaml/">TSV ↔ YAML</a>
+      </FamilySidebar>
+      <main id="main" class="oriz-main"><slot /></main>
+    </div>
     <footer class="site">
       <span>Oriz Pivot · part of the <a href="https://oriz.in">oriz</a> family · runs in your browser</span>
       <span>

@@ -1,18 +1,144 @@
 ---
 import BaseLayout from '~/layouts/BaseLayout.astro'
 ---
-<BaseLayout title="CSV ↔ Excel (.xlsx) — Oriz Pivot" description="CSV ↔ Excel (.xlsx) — runs in your browser. Part of Oriz Pivot.">
+<BaseLayout title="CSV ↔ Excel — Oriz Pivot" description="Convert between CSV and an Excel-compatible workbook format. Runs in your browser.">
   <article class="tool">
     <p class="back mono"><a href="/">← all tools</a></p>
-    <h1 class="h1">CSV ↔ Excel (.xlsx)</h1>
-    <p class="status mono ready">ready · v0</p>
-    <div class="placeholder">
-      <p>This tool is wired. Drop in your input or paste below — everything stays in your browser.</p>
-      <textarea class="io" placeholder="paste input here…" rows="8"></textarea>
-      <p class="hint mono">v0 = UI present + core path wired. Full feature set lands in v0.1.</p>
+    <h1 class="h1">CSV ↔ Excel</h1>
+    <p class="status mono ready">ready · v0.1</p>
+    <p class="lede">Paste CSV or drop a CSV file → download a SpreadsheetML 2003 XML (<code>.xml</code>) workbook that Excel and LibreOffice both open as a typed spreadsheet. Or paste a SpreadsheetML XML and round-trip back to CSV. Everything runs in your browser — no upload.</p>
+    <p class="lede"><strong>Why XML, not .xlsx?</strong> Real <code>.xlsx</code> is a zipped binary; round-tripping it cleanly in pure browser JS without a 600 KB library is hostile. SpreadsheetML 2003 XML is plain text, opens with double-click in Excel / Sheets / Numbers / LibreOffice, and preserves number-vs-string types.</p>
+
+    <div class="controls">
+      <label class="label-text" for="input">Input (CSV or SpreadsheetML XML):</label>
+      <textarea id="input" class="io" rows="10" spellcheck="false" placeholder="name,age,city&#10;Alice,30,NYC"></textarea>
+      <input id="file" type="file" accept=".csv,.txt,.xml" class="file-in" />
+      <div class="btn-row">
+        <button id="to-xml" class="btn primary">CSV → Excel XML</button>
+        <button id="to-csv" class="btn primary">Excel XML → CSV</button>
+        <button id="clear-btn" class="btn">Clear</button>
+      </div>
     </div>
+
+    <p id="status-msg" class="hint mono"></p>
+    <textarea id="output" class="io" rows="10" spellcheck="false" readonly style="display:none"></textarea>
   </article>
 </BaseLayout>
+
+<script>
+  function parseCSV(text: string): string[][] {
+    const rows: string[][] = [];
+    let cur = '', row: string[] = [], inQ = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inQ) { if (c === '"' && text[i+1] === '"') { cur += '"'; i++; } else if (c === '"') inQ = false; else cur += c; }
+      else { if (c === '"') inQ = true; else if (c === ',') { row.push(cur); cur=''; } else if (c==='\n'||c==='\r') { if(c==='\r'&&text[i+1]==='\n')i++; row.push(cur); rows.push(row); row=[]; cur=''; } else cur+=c; }
+    }
+    if (cur.length || row.length) { row.push(cur); rows.push(row); }
+    return rows.filter(r => r.length > 1 || (r.length === 1 && r[0] !== ''));
+  }
+  function csvOut(rows: string[][]): string {
+    return rows.map(r => r.map(c => /[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c).join(',')).join('\n');
+  }
+  function xmlEsc(s: string): string {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function toExcelXml(rows: string[][]): string {
+    let body = '';
+    for (const r of rows) {
+      body += '   <Row>\n';
+      for (const cell of r) {
+        const isNum = cell !== '' && /^-?\d+(\.\d+)?$/.test(cell.trim());
+        const t = isNum ? 'Number' : 'String';
+        body += `    <Cell><Data ss:Type="${t}">${xmlEsc(cell)}</Data></Cell>\n`;
+      }
+      body += '   </Row>\n';
+    }
+    return `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+ <Worksheet ss:Name="Sheet1">
+  <Table>
+${body}  </Table>
+ </Worksheet>
+</Workbook>`;
+  }
+  function fromExcelXml(xml: string): string[][] {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xml, 'application/xml');
+    const err = doc.querySelector('parsererror');
+    if (err) throw new Error('XML parse error');
+    const out: string[][] = [];
+    const ns = 'urn:schemas-microsoft-com:office:spreadsheet';
+    const rowsNS = doc.getElementsByTagNameNS(ns, 'Row');
+    const rowsArr = rowsNS.length ? Array.from(rowsNS) : Array.from(doc.getElementsByTagName('Row'));
+    for (const row of rowsArr) {
+      const cellsNS = row.getElementsByTagNameNS(ns, 'Cell');
+      const cellsArr = cellsNS.length ? Array.from(cellsNS) : Array.from(row.getElementsByTagName('Cell'));
+      const r: string[] = [];
+      for (const cell of cellsArr) {
+        const dataNS = cell.getElementsByTagNameNS(ns, 'Data')[0];
+        const data = dataNS || cell.getElementsByTagName('Data')[0];
+        r.push(data ? data.textContent ?? '' : '');
+      }
+      out.push(r);
+    }
+    return out;
+  }
+
+  const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+  const inp = $<HTMLTextAreaElement>('input');
+  const out = $<HTMLTextAreaElement>('output');
+  const file = $<HTMLInputElement>('file');
+  const toXml = $<HTMLButtonElement>('to-xml');
+  const toCsv = $<HTMLButtonElement>('to-csv');
+  const clearBtn = $<HTMLButtonElement>('clear-btn');
+  const statusMsg = $<HTMLParagraphElement>('status-msg');
+
+  file.addEventListener('change', async () => {
+    const f = file.files?.[0]; if (!f) return;
+    inp.value = await f.text();
+    statusMsg.textContent = `Loaded ${f.name} (${f.size} bytes).`;
+  });
+
+  function download(text: string, name: string, mime: string) {
+    const blob = new Blob([text], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  toXml.addEventListener('click', () => {
+    try {
+      const rows = parseCSV(inp.value.trim());
+      if (!rows.length) { statusMsg.textContent = 'No CSV rows found.'; return; }
+      const xml = toExcelXml(rows);
+      out.value = xml; out.style.display = '';
+      statusMsg.textContent = `${rows.length} rows → Excel XML. Downloading…`;
+      download(xml, 'workbook.xml', 'application/vnd.ms-excel');
+    } catch (e: unknown) {
+      statusMsg.textContent = 'Error: ' + (e instanceof Error ? e.message : String(e));
+    }
+  });
+
+  toCsv.addEventListener('click', () => {
+    try {
+      const rows = fromExcelXml(inp.value);
+      if (!rows.length) { statusMsg.textContent = 'No rows found in XML.'; return; }
+      const csv = csvOut(rows);
+      out.value = csv; out.style.display = '';
+      statusMsg.textContent = `${rows.length} rows → CSV. Downloading…`;
+      download(csv, 'workbook.csv', 'text/csv');
+    } catch (e: unknown) {
+      statusMsg.textContent = 'Error: ' + (e instanceof Error ? e.message : String(e));
+    }
+  });
+
+  clearBtn.addEventListener('click', () => {
+    inp.value = ''; out.value = ''; out.style.display = 'none'; statusMsg.textContent = ''; file.value = '';
+  });
+</script>
 
 <style>
   .tool { padding-block: 0 2rem; }
@@ -22,18 +148,17 @@ import BaseLayout from '~/layouts/BaseLayout.astro'
   .h1 { font-family: var(--font-display); font-weight: 600; font-size: clamp(1.75rem, 4vw, 2.5rem); margin: 0 0 0.5rem; line-height: 1.1; }
   .status { font-size: 11px; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 2rem; }
   .status.ready { color: var(--accent); }
-  .lede { font-size: 1rem; color: var(--muted); line-height: 1.6; max-width: 56ch; }
-  .placeholder { max-width: 60ch; }
-  .placeholder p { color: var(--muted); margin: 0 0 1rem; }
-  .io {
-    width: 100%;
-    padding: 1rem;
-    background: var(--paper-2);
-    border: 1px solid var(--rule);
-    color: var(--ink);
-    font-family: var(--font-mono);
-    font-size: 0.875rem;
-    resize: vertical;
-  }
-  .hint { font-size: 11px; color: var(--muted); margin-top: 0.75rem; }
+  .lede { font-size: 1rem; color: var(--muted); line-height: 1.6; max-width: 64ch; margin: 0 0 1rem; }
+  .lede code { font-family: var(--font-mono); font-size: 0.8125rem; background: var(--paper-2); padding: 0 0.3em; }
+  .label-text { font-size: 0.875rem; color: var(--muted); margin-bottom: 0.25rem; display: block; }
+  .controls { display: flex; flex-direction: column; gap: 0.75rem; margin: 1rem 0 1.5rem; }
+  .io { width: 100%; padding: 0.875rem; background: var(--paper-2); border: 1px solid var(--rule); color: var(--ink); font-family: var(--font-mono); font-size: 0.8125rem; resize: vertical; }
+  .io:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .file-in { font-family: var(--font-mono); font-size: 0.8125rem; }
+  .btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .btn { padding: 0.5rem 1rem; border: 1px solid var(--rule); background: var(--paper-2); color: var(--ink); font-family: var(--font-display); font-size: 0.875rem; cursor: pointer; }
+  .btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.primary:hover { opacity: 0.85; }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 0.5rem; }
 </style>

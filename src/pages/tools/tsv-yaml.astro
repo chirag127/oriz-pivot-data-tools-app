@@ -1,17 +1,160 @@
 ---
 import BaseLayout from '~/layouts/BaseLayout.astro'
 ---
-<BaseLayout title="CSV ↔ TSV / YAML — Oriz Pivot" description="CSV ↔ TSV / YAML — runs in your browser. Part of Oriz Pivot.">
+<BaseLayout title="CSV ↔ TSV / YAML — Oriz Pivot" description="Convert between CSV, TSV, and YAML. Runs in your browser.">
   <article class="tool">
     <p class="back mono"><a href="/">← all tools</a></p>
     <h1 class="h1">CSV ↔ TSV / YAML</h1>
-    <p class="status mono">coming · v0.1</p>
-    <p class="lede">
-      This feature is on the v0.1 roadmap. The page exists so we can iterate on
-      the design and copy in parallel; the implementation lands next sprint.
-    </p>
+    <p class="status mono ready">ready · v0.1</p>
+    <p class="lede">Pick input and output formats, paste data, get converted output. CSV uses RFC 4180 quoting; YAML emits a list of mappings.</p>
+
+    <div class="controls">
+      <div class="pick-row">
+        <div><label class="label-text" for="from-pick">From:</label>
+          <select id="from-pick" class="io"><option value="csv">CSV</option><option value="tsv">TSV</option><option value="yaml">YAML</option></select>
+        </div>
+        <div><label class="label-text" for="to-pick">To:</label>
+          <select id="to-pick" class="io"><option value="tsv">TSV</option><option value="yaml">YAML</option><option value="csv">CSV</option></select>
+        </div>
+      </div>
+      <label class="label-text" for="input">Input:</label>
+      <textarea id="input" class="io" rows="10" spellcheck="false" placeholder="name,age,city&#10;Alice,30,NYC"></textarea>
+      <div class="btn-row">
+        <button id="convert-btn" class="btn primary">Convert</button>
+        <button id="download-btn" class="btn" disabled>Download</button>
+        <button id="copy-btn" class="btn" disabled>Copy</button>
+        <button id="clear-btn" class="btn">Clear</button>
+      </div>
+    </div>
+
+    <p id="status-msg" class="hint mono"></p>
+    <label class="label-text" id="out-label" for="output" style="display:none">Output:</label>
+    <textarea id="output" class="io" rows="10" spellcheck="false" readonly style="display:none"></textarea>
   </article>
 </BaseLayout>
+
+<script>
+  function parseDelim(text: string, sep: string): string[][] {
+    const rows: string[][] = [];
+    let cur = '', row: string[] = [], inQ = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inQ) { if (c === '"' && text[i+1] === '"') { cur += '"'; i++; } else if (c === '"') inQ = false; else cur += c; }
+      else { if (c === '"') inQ = true; else if (c === sep) { row.push(cur); cur=''; } else if (c==='\n'||c==='\r') { if(c==='\r'&&text[i+1]==='\n')i++; row.push(cur); rows.push(row); row=[]; cur=''; } else cur+=c; }
+    }
+    if (cur.length || row.length) { row.push(cur); rows.push(row); }
+    return rows.filter(r => r.length > 1 || (r.length === 1 && r[0] !== ''));
+  }
+  function emitCSV(rows: string[][]): string {
+    return rows.map(r => r.map(c => /[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c).join(',')).join('\n');
+  }
+  function emitTSV(rows: string[][]): string {
+    return rows.map(r => r.map(c => c.replace(/\t/g, ' ').replace(/\r?\n/g, ' ')).join('\t')).join('\n');
+  }
+  function yamlEscape(s: string): string {
+    if (s === '') return '""';
+    if (/^(true|false|null|yes|no|~|on|off)$/i.test(s)) return JSON.stringify(s);
+    if (/^-?\d+(\.\d+)?$/.test(s)) return JSON.stringify(s);
+    if (/^[A-Za-z_][A-Za-z0-9_\-. ]*$/.test(s) && !/^[ \t-]/.test(s)) return s;
+    return JSON.stringify(s);
+  }
+  function emitYAML(rows: string[][]): string {
+    if (rows.length < 2) return '[]\n';
+    const [headers, ...body] = rows;
+    let out = '';
+    for (const r of body) {
+      const first = headers[0] ?? 'col0';
+      out += `- ${first}: ${yamlEscape(r[0] ?? '')}\n`;
+      for (let i = 1; i < headers.length; i++) {
+        out += `  ${headers[i]}: ${yamlEscape(r[i] ?? '')}\n`;
+      }
+    }
+    return out;
+  }
+  function parseYAML(text: string): string[][] {
+    // Minimal: list of mappings where each entry begins with "- key: value" and continues "  key: value".
+    const items: Record<string, string>[] = [];
+    let cur: Record<string, string> | null = null;
+    for (const raw of text.split(/\r?\n/)) {
+      if (!raw.trim() || raw.trim().startsWith('#')) continue;
+      const m = raw.match(/^(\s*)-\s+(.+)$/);
+      if (m) {
+        if (cur) items.push(cur);
+        cur = {};
+        const inner = m[2];
+        const km = inner.match(/^([^:]+):\s*(.*)$/);
+        if (km) cur[km[1].trim()] = unquote(km[2]);
+        continue;
+      }
+      const km = raw.match(/^\s+([^:]+):\s*(.*)$/);
+      if (km && cur) cur[km[1].trim()] = unquote(km[2]);
+    }
+    if (cur) items.push(cur);
+    if (!items.length) return [];
+    const keys = Array.from(items.reduce((s, o) => { Object.keys(o).forEach(k => s.add(k)); return s; }, new Set<string>()));
+    return [keys, ...items.map(o => keys.map(k => o[k] ?? ''))];
+  }
+  function unquote(s: string): string {
+    s = s.trim();
+    if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+      try { return JSON.parse(s.replace(/^'(.*)'$/, '"$1"')); } catch { return s.slice(1, -1); }
+    }
+    return s;
+  }
+
+  const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+  const fromPick = $<HTMLSelectElement>('from-pick');
+  const toPick = $<HTMLSelectElement>('to-pick');
+  const inp = $<HTMLTextAreaElement>('input');
+  const out = $<HTMLTextAreaElement>('output');
+  const outLbl = $<HTMLLabelElement>('out-label');
+  const convertBtn = $<HTMLButtonElement>('convert-btn');
+  const downloadBtn = $<HTMLButtonElement>('download-btn');
+  const copyBtn = $<HTMLButtonElement>('copy-btn');
+  const clearBtn = $<HTMLButtonElement>('clear-btn');
+  const statusMsg = $<HTMLParagraphElement>('status-msg');
+
+  let outText = '';
+
+  convertBtn.addEventListener('click', () => {
+    try {
+      let rows: string[][];
+      const from = fromPick.value;
+      if (from === 'csv') rows = parseDelim(inp.value.trim(), ',');
+      else if (from === 'tsv') rows = parseDelim(inp.value.trim(), '\t');
+      else rows = parseYAML(inp.value);
+      if (!rows.length) { statusMsg.textContent = 'No rows parsed.'; return; }
+      const to = toPick.value;
+      if (to === 'csv') outText = emitCSV(rows);
+      else if (to === 'tsv') outText = emitTSV(rows);
+      else outText = emitYAML(rows);
+      out.value = outText; out.style.display = ''; outLbl.style.display = '';
+      downloadBtn.disabled = false; copyBtn.disabled = false;
+      statusMsg.textContent = `${rows.length - 1} data rows converted (${from} → ${to}).`;
+    } catch (e: unknown) {
+      statusMsg.textContent = 'Error: ' + (e instanceof Error ? e.message : String(e));
+    }
+  });
+
+  downloadBtn.addEventListener('click', () => {
+    const ext = toPick.value === 'yaml' ? 'yaml' : toPick.value;
+    const mime = toPick.value === 'yaml' ? 'application/yaml' : (toPick.value === 'tsv' ? 'text/tab-separated-values' : 'text/csv');
+    const blob = new Blob([outText], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `converted.${ext}`; a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  copyBtn.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(outText); statusMsg.textContent = 'Copied.'; }
+    catch { statusMsg.textContent = 'Copy failed.'; }
+  });
+
+  clearBtn.addEventListener('click', () => {
+    inp.value = ''; out.value = ''; out.style.display = 'none'; outLbl.style.display = 'none';
+    statusMsg.textContent = ''; downloadBtn.disabled = true; copyBtn.disabled = true;
+  });
+</script>
 
 <style>
   .tool { padding-block: 0 2rem; }
@@ -21,18 +164,19 @@ import BaseLayout from '~/layouts/BaseLayout.astro'
   .h1 { font-family: var(--font-display); font-weight: 600; font-size: clamp(1.75rem, 4vw, 2.5rem); margin: 0 0 0.5rem; line-height: 1.1; }
   .status { font-size: 11px; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 2rem; }
   .status.ready { color: var(--accent); }
-  .lede { font-size: 1rem; color: var(--muted); line-height: 1.6; max-width: 56ch; }
-  .placeholder { max-width: 60ch; }
-  .placeholder p { color: var(--muted); margin: 0 0 1rem; }
-  .io {
-    width: 100%;
-    padding: 1rem;
-    background: var(--paper-2);
-    border: 1px solid var(--rule);
-    color: var(--ink);
-    font-family: var(--font-mono);
-    font-size: 0.875rem;
-    resize: vertical;
-  }
-  .hint { font-size: 11px; color: var(--muted); margin-top: 0.75rem; }
+  .lede { font-size: 1rem; color: var(--muted); line-height: 1.6; max-width: 64ch; margin: 0 0 1.5rem; }
+  .label-text { font-size: 0.875rem; color: var(--muted); margin-bottom: 0.25rem; display: block; }
+  .controls { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem; }
+  .pick-row { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .pick-row > div { flex: 1; min-width: 140px; }
+  .io { width: 100%; padding: 0.875rem; background: var(--paper-2); border: 1px solid var(--rule); color: var(--ink); font-family: var(--font-mono); font-size: 0.8125rem; resize: vertical; }
+  .io:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .pick-row .io { padding: 0.5rem; }
+  .btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .btn { padding: 0.5rem 1rem; border: 1px solid var(--rule); background: var(--paper-2); color: var(--ink); font-family: var(--font-display); font-size: 0.875rem; cursor: pointer; }
+  .btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.primary:hover { opacity: 0.85; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 0.5rem; }
 </style>

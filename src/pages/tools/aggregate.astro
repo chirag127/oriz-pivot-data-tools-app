@@ -1,17 +1,112 @@
 ---
 import BaseLayout from '~/layouts/BaseLayout.astro'
 ---
-<BaseLayout title="aggregate (sum / avg / count / min / max) — Oriz Pivot" description="aggregate (sum / avg / count / min / max) — runs in your browser. Part of Oriz Pivot.">
+<BaseLayout title="Aggregate (sum / avg / count / min / max) — Oriz Pivot" description="Compute sum, avg, count, min, max on a numeric CSV column. Runs in your browser.">
   <article class="tool">
     <p class="back mono"><a href="/">← all tools</a></p>
-    <h1 class="h1">aggregate (sum / avg / count / min / max)</h1>
-    <p class="status mono">coming · v0.1</p>
-    <p class="lede">
-      This feature is on the v0.1 roadmap. The page exists so we can iterate on
-      the design and copy in parallel; the implementation lands next sprint.
-    </p>
+    <h1 class="h1">Aggregate</h1>
+    <p class="status mono ready">ready · v0.1</p>
+    <p class="lede">Paste CSV with a header row, pick a numeric column, get sum / avg / count / min / max. Everything runs in your browser.</p>
+
+    <div class="controls">
+      <label class="label-text" for="csv-in">CSV (first row = headers):</label>
+      <textarea id="csv-in" class="io" rows="8" spellcheck="false" placeholder="amount,region&#10;120,US&#10;45,EU&#10;78,US&#10;200,EU"></textarea>
+      <div class="btn-row">
+        <button id="parse-btn" class="btn primary">Compute</button>
+        <button id="clear-btn" class="btn">Clear</button>
+      </div>
+    </div>
+
+    <div id="col-row" class="col-row" style="display:none">
+      <label class="label-text" for="col-pick">Column:</label>
+      <select id="col-pick" class="io"></select>
+    </div>
+
+    <p id="status-msg" class="hint mono"></p>
+    <table id="result-tbl" class="data-table" style="display:none">
+      <thead><tr><th>metric</th><th>value</th></tr></thead>
+      <tbody id="result-body"></tbody>
+    </table>
   </article>
 </BaseLayout>
+
+<script>
+  function parseCSV(text: string): string[][] {
+    const rows: string[][] = [];
+    let cur = '', row: string[] = [], inQ = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inQ) {
+        if (c === '"' && text[i + 1] === '"') { cur += '"'; i++; }
+        else if (c === '"') inQ = false;
+        else cur += c;
+      } else {
+        if (c === '"') inQ = true;
+        else if (c === ',') { row.push(cur); cur = ''; }
+        else if (c === '\n' || c === '\r') {
+          if (c === '\r' && text[i + 1] === '\n') i++;
+          row.push(cur); rows.push(row); row = []; cur = '';
+        } else cur += c;
+      }
+    }
+    if (cur.length || row.length) { row.push(cur); rows.push(row); }
+    return rows.filter(r => r.length > 1 || (r.length === 1 && r[0] !== ''));
+  }
+
+  const csvIn = document.getElementById('csv-in') as HTMLTextAreaElement;
+  const parseBtn = document.getElementById('parse-btn') as HTMLButtonElement;
+  const clearBtn = document.getElementById('clear-btn') as HTMLButtonElement;
+  const colRow = document.getElementById('col-row') as HTMLDivElement;
+  const colPick = document.getElementById('col-pick') as HTMLSelectElement;
+  const statusMsg = document.getElementById('status-msg') as HTMLParagraphElement;
+  const resultTbl = document.getElementById('result-tbl') as HTMLTableElement;
+  const resultBody = document.getElementById('result-body') as HTMLTableSectionElement;
+
+  let headers: string[] = [], rows: string[][] = [];
+
+  function compute(colIdx: number) {
+    const vals = rows.map(r => Number(r[colIdx])).filter(n => Number.isFinite(n));
+    if (!vals.length) { statusMsg.textContent = 'No numeric values in selected column.'; resultTbl.style.display = 'none'; return; }
+    const sum = vals.reduce((a, b) => a + b, 0);
+    const avg = sum / vals.length;
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const fmt = (n: number) => Number.isInteger(n) ? String(n) : n.toFixed(4).replace(/\.?0+$/, '');
+    resultBody.innerHTML = '';
+    [['count', String(vals.length)], ['sum', fmt(sum)], ['avg', fmt(avg)], ['min', fmt(min)], ['max', fmt(max)]].forEach(([k, v]) => {
+      const tr = document.createElement('tr');
+      const td1 = document.createElement('td'); td1.textContent = k;
+      const td2 = document.createElement('td'); td2.textContent = v;
+      tr.appendChild(td1); tr.appendChild(td2); resultBody.appendChild(tr);
+    });
+    resultTbl.style.display = '';
+    statusMsg.textContent = `${vals.length} numeric values found (${rows.length - vals.length} skipped).`;
+  }
+
+  parseBtn.addEventListener('click', () => {
+    try {
+      const data = parseCSV(csvIn.value.trim());
+      if (data.length < 2) { statusMsg.textContent = 'Need header row + at least one data row.'; return; }
+      [headers, ...rows] = [data[0], ...data.slice(1)];
+      colPick.innerHTML = '';
+      headers.forEach((h, i) => {
+        const opt = document.createElement('option');
+        opt.value = String(i); opt.textContent = h || `col ${i}`;
+        colPick.appendChild(opt);
+      });
+      colRow.style.display = '';
+      compute(0);
+    } catch (e: unknown) {
+      statusMsg.textContent = 'Parse error: ' + (e instanceof Error ? e.message : String(e));
+    }
+  });
+
+  colPick.addEventListener('change', () => compute(Number(colPick.value)));
+
+  clearBtn.addEventListener('click', () => {
+    csvIn.value = ''; colRow.style.display = 'none'; resultTbl.style.display = 'none'; statusMsg.textContent = '';
+  });
+</script>
 
 <style>
   .tool { padding-block: 0 2rem; }
@@ -21,18 +116,19 @@ import BaseLayout from '~/layouts/BaseLayout.astro'
   .h1 { font-family: var(--font-display); font-weight: 600; font-size: clamp(1.75rem, 4vw, 2.5rem); margin: 0 0 0.5rem; line-height: 1.1; }
   .status { font-size: 11px; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 2rem; }
   .status.ready { color: var(--accent); }
-  .lede { font-size: 1rem; color: var(--muted); line-height: 1.6; max-width: 56ch; }
-  .placeholder { max-width: 60ch; }
-  .placeholder p { color: var(--muted); margin: 0 0 1rem; }
-  .io {
-    width: 100%;
-    padding: 1rem;
-    background: var(--paper-2);
-    border: 1px solid var(--rule);
-    color: var(--ink);
-    font-family: var(--font-mono);
-    font-size: 0.875rem;
-    resize: vertical;
-  }
-  .hint { font-size: 11px; color: var(--muted); margin-top: 0.75rem; }
+  .lede { font-size: 1rem; color: var(--muted); line-height: 1.6; max-width: 56ch; margin: 0 0 1.5rem; }
+  .label-text { font-size: 0.875rem; color: var(--muted); margin-bottom: 0.25rem; display: block; }
+  .controls { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem; }
+  .col-row { margin: 0 0 1rem; }
+  .io { width: 100%; padding: 0.875rem; background: var(--paper-2); border: 1px solid var(--rule); color: var(--ink); font-family: var(--font-mono); font-size: 0.8125rem; resize: vertical; }
+  .io:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .btn { padding: 0.5rem 1rem; border: 1px solid var(--rule); background: var(--paper-2); color: var(--ink); font-family: var(--font-display); font-size: 0.875rem; cursor: pointer; }
+  .btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.primary:hover { opacity: 0.85; }
+  .data-table { border-collapse: collapse; min-width: 320px; font-size: 0.875rem; margin-top: 1rem; }
+  .data-table th, .data-table td { border: 1px solid var(--rule); padding: 0.4rem 0.75rem; text-align: left; }
+  .data-table th { background: var(--paper-2); font-weight: 600; }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 0.5rem; }
 </style>

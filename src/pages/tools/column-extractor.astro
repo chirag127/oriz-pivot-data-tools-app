@@ -1,20 +1,20 @@
 ---
 import BaseLayout from '~/layouts/BaseLayout.astro'
 ---
-<BaseLayout title="Data Deduplicator — Oriz Pivot" description="Paste CSV, pick columns, remove duplicate rows. Runs in your browser.">
+<BaseLayout title="Column Extractor — Oriz Pivot" description="Paste CSV, pick the columns to keep, download the subset. Runs in your browser.">
   <article class="tool">
     <p class="back mono"><a href="/">← all tools</a></p>
-    <h1 class="h1">Data Deduplicator</h1>
+    <h1 class="h1">Column Extractor</h1>
     <p class="status mono ready">ready · v0.1</p>
 
     <div class="controls">
       <label class="label-text" for="csv-input">Paste CSV (first row = headers):</label>
-      <textarea id="csv-input" class="io" placeholder="name,age,city&#10;Alice,30,NYC&#10;Bob,25,LA&#10;Alice,30,NYC&#10;Charlie,28,NYC" rows="7" spellcheck="false"></textarea>
+      <textarea id="csv-input" class="io" placeholder="name,age,city,email&#10;Alice,30,NYC,alice@example.com&#10;Bob,25,LA,bob@example.com" rows="7" spellcheck="false"></textarea>
       <div id="col-section" style="display:none">
-        <p class="label-text">Deduplicate by columns (check = include in key):</p>
+        <p class="label-text">Select columns to keep:</p>
         <div id="col-checks" class="col-checks"></div>
         <div class="btn-row">
-          <button id="dedup-btn" class="btn primary">Remove duplicates</button>
+          <button id="extract-btn" class="btn primary">Extract columns</button>
           <button id="download-btn" class="btn" disabled>Download CSV</button>
         </div>
       </div>
@@ -34,7 +34,7 @@ import BaseLayout from '~/layouts/BaseLayout.astro'
 
   const csvInput = document.getElementById('csv-input') as HTMLTextAreaElement
   const parseBtn = document.getElementById('parse-btn') as HTMLButtonElement
-  const dedupBtn = document.getElementById('dedup-btn') as HTMLButtonElement
+  const extractBtn = document.getElementById('extract-btn') as HTMLButtonElement
   const downloadBtn = document.getElementById('download-btn') as HTMLButtonElement
   const clearBtn = document.getElementById('clear-btn') as HTMLButtonElement
   const colSection = document.getElementById('col-section') as HTMLDivElement
@@ -45,7 +45,8 @@ import BaseLayout from '~/layouts/BaseLayout.astro'
 
   let headers: string[] = []
   let rows: string[][] = []
-  let dedupedRows: string[][] = []
+  let extractedHeaders: string[] = []
+  let extractedRows: string[][] = []
 
   function renderPreview(h: string[], r: string[][], label: string) {
     statusMsg.textContent = label
@@ -62,13 +63,10 @@ import BaseLayout from '~/layouts/BaseLayout.astro'
       tbody.appendChild(tr)
     })
     table.appendChild(tbody)
-    tableWrap.innerHTML = ''
-    tableWrap.appendChild(table)
+    tableWrap.innerHTML = ''; tableWrap.appendChild(table)
     if (r.length > 50) {
-      const note = document.createElement('p')
-      note.className = 'hint mono'
-      note.textContent = `Showing first 50 of ${r.length} rows.`
-      tableWrap.appendChild(note)
+      const note = document.createElement('p'); note.className = 'hint mono'
+      note.textContent = `Showing first 50 of ${r.length} rows.`; tableWrap.appendChild(note)
     }
   }
 
@@ -81,44 +79,34 @@ import BaseLayout from '~/layouts/BaseLayout.astro'
     headers = h; rows = r
     colChecks.innerHTML = ''
     headers.forEach((col, i) => {
-      const label = document.createElement('label')
-      label.className = 'check-label'
-      const cb = document.createElement('input')
-      cb.type = 'checkbox'; cb.value = String(i); cb.checked = true; cb.id = `col-cb-${i}`
-      label.appendChild(cb)
-      label.append(' ' + col)
-      colChecks.appendChild(label)
+      const label = document.createElement('label'); label.className = 'check-label'
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = String(i); cb.checked = true; cb.id = `col-cb-${i}`
+      label.appendChild(cb); label.append(' ' + col); colChecks.appendChild(label)
     })
-    colSection.style.display = ''
-    parseRow.style.display = 'none'
-    renderPreview(headers, rows, `${rows.length} rows parsed. Select key columns and click "Remove duplicates".`)
+    colSection.style.display = ''; parseRow.style.display = 'none'
+    renderPreview(headers, rows, `${rows.length} rows, ${headers.length} columns. Uncheck columns to exclude.`)
   })
 
-  dedupBtn.addEventListener('click', () => {
-    const checkedCols = Array.from(colChecks.querySelectorAll<HTMLInputElement>('input:checked')).map(cb => Number(cb.value))
-    if (!checkedCols.length) { statusMsg.textContent = 'Select at least one column.'; return }
-    const seen = new Set<string>()
-    dedupedRows = rows.filter(row => {
-      const key = checkedCols.map(i => row[i] ?? '').join('\x00')
-      if (seen.has(key)) return false
-      seen.add(key); return true
-    })
-    const removed = rows.length - dedupedRows.length
+  extractBtn.addEventListener('click', () => {
+    const keepCols = Array.from(colChecks.querySelectorAll<HTMLInputElement>('input:checked')).map(cb => Number(cb.value))
+    if (!keepCols.length) { statusMsg.textContent = 'Select at least one column.'; return }
+    extractedHeaders = keepCols.map(i => headers[i])
+    extractedRows = rows.map(row => keepCols.map(i => row[i] ?? ''))
     downloadBtn.disabled = false
-    renderPreview(headers, dedupedRows, `${removed} duplicate${removed !== 1 ? 's' : ''} removed. ${dedupedRows.length} rows remain.`)
+    renderPreview(extractedHeaders, extractedRows, `Extracted ${keepCols.length} column${keepCols.length !== 1 ? 's' : ''}, ${extractedRows.length} rows.`)
   })
 
   downloadBtn.addEventListener('click', () => {
-    const csv = Papa.unparse([headers, ...dedupedRows])
+    const csv = Papa.unparse([extractedHeaders, ...extractedRows])
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
-    const a = document.createElement('a'); a.href = url; a.download = 'deduped.csv'; a.click()
+    const a = document.createElement('a'); a.href = url; a.download = 'extracted.csv'; a.click()
     URL.revokeObjectURL(url)
   })
 
   clearBtn.addEventListener('click', () => {
     csvInput.value = ''; tableWrap.innerHTML = ''; statusMsg.textContent = ''
-    headers = []; rows = []; dedupedRows = []
+    headers = []; rows = []; extractedHeaders = []; extractedRows = []
     colSection.style.display = 'none'; parseRow.style.display = ''
     downloadBtn.disabled = true
   })

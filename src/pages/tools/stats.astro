@@ -1,0 +1,138 @@
+---
+import BaseLayout from '~/layouts/BaseLayout.astro'
+---
+<BaseLayout title="Stats Calculator — Oriz Pivot" description="Paste numbers and get mean, median, mode, std dev, min, max, and percentiles. Runs in your browser.">
+  <article class="tool">
+    <p class="back mono"><a href="/">← all tools</a></p>
+    <h1 class="h1">Stats Calculator</h1>
+    <p class="status mono ready">ready · v0.1</p>
+
+    <div class="controls">
+      <label class="label-text" for="nums-input">Enter numbers (comma, newline, or space separated):</label>
+      <textarea id="nums-input" class="io" placeholder="1, 2, 3, 4, 5" rows="5" spellcheck="false"></textarea>
+      <div class="btn-row">
+        <button id="calc-btn" class="btn primary">Calculate</button>
+        <button id="clear-btn" class="btn">Clear</button>
+      </div>
+    </div>
+
+    <div id="results-wrap" style="display:none">
+      <table class="stats-table">
+        <tbody id="stats-body"></tbody>
+      </table>
+    </div>
+    <p id="status-msg" class="hint mono"></p>
+  </article>
+</BaseLayout>
+
+<script>
+  const numsInput = document.getElementById('nums-input') as HTMLTextAreaElement
+  const calcBtn = document.getElementById('calc-btn') as HTMLButtonElement
+  const clearBtn = document.getElementById('clear-btn') as HTMLButtonElement
+  const resultsWrap = document.getElementById('results-wrap') as HTMLDivElement
+  const statsBody = document.getElementById('stats-body') as HTMLTableSectionElement
+  const statusMsg = document.getElementById('status-msg') as HTMLParagraphElement
+
+  function parseNumbers(raw: string): number[] {
+    return raw.split(/[\s,\n\r;]+/).map(s => s.trim()).filter(Boolean).map(Number).filter(n => !isNaN(n))
+  }
+
+  function median(sorted: number[]): number {
+    const mid = Math.floor(sorted.length / 2)
+    return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+  }
+
+  function percentile(sorted: number[], p: number): number {
+    if (sorted.length === 1) return sorted[0]
+    const idx = (p / 100) * (sorted.length - 1)
+    const lo = Math.floor(idx), hi = Math.ceil(idx)
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo)
+  }
+
+  function mode(nums: number[]): string {
+    const freq = new Map<number, number>()
+    nums.forEach(n => freq.set(n, (freq.get(n) ?? 0) + 1))
+    const max = Math.max(...freq.values())
+    const modes = [...freq.entries()].filter(([, v]) => v === max).map(([k]) => k)
+    if (modes.length > 3) return modes.slice(0, 3).join(', ') + ` …+${modes.length - 3} more`
+    return modes.join(', ')
+  }
+
+  function stddev(nums: number[], mean: number, population = false): number {
+    const variance = nums.reduce((acc, n) => acc + (n - mean) ** 2, 0) / (population ? nums.length : nums.length - 1)
+    return Math.sqrt(variance)
+  }
+
+  function fmt(n: number): string {
+    if (Number.isInteger(n)) return String(n)
+    return n.toPrecision(8).replace(/\.?0+$/, '')
+  }
+
+  function addRow(label: string, value: string) {
+    const tr = document.createElement('tr')
+    const tdLabel = document.createElement('td'); tdLabel.textContent = label; tdLabel.className = 'stat-label'
+    const tdValue = document.createElement('td'); tdValue.textContent = value; tdValue.className = 'stat-value mono'
+    tr.appendChild(tdLabel); tr.appendChild(tdValue); statsBody.appendChild(tr)
+  }
+
+  calcBtn.addEventListener('click', () => {
+    const raw = numsInput.value.trim()
+    if (!raw) { statusMsg.textContent = 'Enter some numbers first.'; return }
+    const nums = parseNumbers(raw)
+    if (nums.length === 0) { statusMsg.textContent = 'No valid numbers found.'; return }
+    const sorted = [...nums].sort((a, b) => a - b)
+    const sum = nums.reduce((a, b) => a + b, 0)
+    const mean = sum / nums.length
+    const std = nums.length > 1 ? stddev(nums, mean) : 0
+
+    statsBody.innerHTML = ''
+    addRow('Count', String(nums.length))
+    addRow('Sum', fmt(sum))
+    addRow('Mean', fmt(mean))
+    addRow('Median', fmt(median(sorted)))
+    addRow('Mode', mode(nums))
+    addRow('Min', fmt(sorted[0]))
+    addRow('Max', fmt(sorted[sorted.length - 1]))
+    addRow('Range', fmt(sorted[sorted.length - 1] - sorted[0]))
+    addRow('Std Dev (sample)', fmt(std))
+    addRow('Std Dev (population)', fmt(nums.length > 1 ? stddev(nums, mean, true) : 0))
+    addRow('P10', fmt(percentile(sorted, 10)))
+    addRow('P25 (Q1)', fmt(percentile(sorted, 25)))
+    addRow('P50 (Q2)', fmt(percentile(sorted, 50)))
+    addRow('P75 (Q3)', fmt(percentile(sorted, 75)))
+    addRow('P90', fmt(percentile(sorted, 90)))
+    addRow('P95', fmt(percentile(sorted, 95)))
+    addRow('P99', fmt(percentile(sorted, 99)))
+
+    resultsWrap.style.display = ''
+    statusMsg.textContent = `${nums.length} number${nums.length !== 1 ? 's' : ''} analysed.`
+  })
+
+  clearBtn.addEventListener('click', () => {
+    numsInput.value = ''; statsBody.innerHTML = ''; resultsWrap.style.display = 'none'; statusMsg.textContent = ''
+  })
+</script>
+
+<style>
+  .tool { padding-block: 0 2rem; }
+  .back { font-size: 12px; margin: 0 0 2rem; }
+  .back a { color: var(--muted); text-decoration: none; }
+  .back a:hover { color: var(--ink); }
+  .h1 { font-family: var(--font-display); font-weight: 600; font-size: clamp(1.75rem, 4vw, 2.5rem); margin: 0 0 0.5rem; line-height: 1.1; }
+  .status { font-size: 11px; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 2rem; }
+  .status.ready { color: var(--accent); }
+  .label-text { font-size: 0.875rem; color: var(--muted); margin-bottom: 0.25rem; display: block; }
+  .controls { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem; }
+  .io { width: 100%; padding: 0.875rem; background: var(--paper-2); border: 1px solid var(--rule); color: var(--ink); font-family: var(--font-mono); font-size: 0.8125rem; resize: vertical; }
+  .io:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .btn { padding: 0.5rem 1rem; border: 1px solid var(--rule); background: var(--paper-2); color: var(--ink); font-family: var(--font-display); font-size: 0.875rem; cursor: pointer; }
+  .btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.primary:hover { opacity: 0.85; }
+  .stats-table { border-collapse: collapse; width: 100%; max-width: 36rem; margin-top: 1rem; }
+  .stats-table tr:nth-child(even) { background: var(--paper-2); }
+  .stat-label { padding: 0.5rem 1rem 0.5rem 0.75rem; font-size: 0.875rem; color: var(--muted); width: 50%; border-bottom: 1px solid var(--rule); }
+  .stat-value { padding: 0.5rem 0.75rem; font-size: 0.875rem; border-bottom: 1px solid var(--rule); font-weight: 600; }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 0.5rem; }
+</style>

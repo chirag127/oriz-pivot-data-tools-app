@@ -1,26 +1,25 @@
 ---
 import BaseLayout from '~/layouts/BaseLayout.astro'
 ---
-<BaseLayout title="CSV → JSON — Oriz Pivot" description="Paste CSV and get prettified JSON. Runs in your browser.">
+<BaseLayout title="JSON → CSV — Oriz Pivot" description="Paste a JSON array and download it as a CSV file. Runs in your browser.">
   <article class="tool">
     <p class="back mono"><a href="/">← all tools</a></p>
-    <h1 class="h1">CSV → JSON</h1>
+    <h1 class="h1">JSON → CSV</h1>
     <p class="status mono ready">ready · v0.1</p>
 
     <div class="controls">
-      <label class="label-text" for="csv-input">Paste CSV (first row = headers):</label>
-      <textarea id="csv-input" class="io" placeholder="name,age&#10;Alice,30&#10;Bob,25" rows="8" spellcheck="false"></textarea>
+      <label class="label-text" for="json-input">Paste JSON array of objects:</label>
+      <textarea id="json-input" class="io" placeholder='[{"name":"Alice","age":30},{"name":"Bob","age":25}]' rows="8" spellcheck="false"></textarea>
       <div class="btn-row">
-        <button id="convert-btn" class="btn primary">Convert to JSON</button>
-        <button id="download-btn" class="btn" disabled>Download JSON</button>
-        <button id="copy-btn" class="btn" disabled>Copy JSON</button>
+        <button id="convert-btn" class="btn primary">Convert to CSV</button>
+        <button id="download-btn" class="btn" disabled>Download CSV</button>
         <button id="clear-btn" class="btn">Clear</button>
       </div>
     </div>
 
     <div id="output-wrap">
-      <label class="label-text" for="json-output" style="display:none" id="json-label">JSON output:</label>
-      <textarea id="json-output" class="io" rows="12" spellcheck="false" readonly style="display:none"></textarea>
+      <label class="label-text" for="csv-output" style="display:none" id="csv-label">CSV output:</label>
+      <textarea id="csv-output" class="io" rows="10" spellcheck="false" readonly style="display:none"></textarea>
     </div>
     <p id="status-msg" class="hint mono"></p>
   </article>
@@ -29,51 +28,46 @@ import BaseLayout from '~/layouts/BaseLayout.astro'
 <script>
   import Papa from 'papaparse'
 
-  const csvInput = document.getElementById('csv-input') as HTMLTextAreaElement
+  const jsonInput = document.getElementById('json-input') as HTMLTextAreaElement
   const convertBtn = document.getElementById('convert-btn') as HTMLButtonElement
   const downloadBtn = document.getElementById('download-btn') as HTMLButtonElement
-  const copyBtn = document.getElementById('copy-btn') as HTMLButtonElement
   const clearBtn = document.getElementById('clear-btn') as HTMLButtonElement
-  const jsonOutput = document.getElementById('json-output') as HTMLTextAreaElement
-  const jsonLabel = document.getElementById('json-label') as HTMLLabelElement
+  const csvOutput = document.getElementById('csv-output') as HTMLTextAreaElement
+  const csvLabel = document.getElementById('csv-label') as HTMLLabelElement
   const statusMsg = document.getElementById('status-msg') as HTMLParagraphElement
 
-  let jsonString = ''
+  let csvString = ''
 
   convertBtn.addEventListener('click', () => {
-    const raw = csvInput.value.trim()
-    if (!raw) { statusMsg.textContent = 'Paste CSV first.'; return }
-    const result = Papa.parse(raw, { header: true, skipEmptyLines: true, dynamicTyping: true })
-    if (result.errors.length && !result.data.length) {
-      statusMsg.textContent = 'Parse error: ' + result.errors[0].message; return
+    const raw = jsonInput.value.trim()
+    if (!raw) { statusMsg.textContent = 'Paste a JSON array first.'; return }
+    let data: Record<string, unknown>[]
+    try {
+      data = JSON.parse(raw)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      statusMsg.textContent = 'JSON parse error: ' + msg
+      return
     }
-    jsonString = JSON.stringify(result.data, null, 2)
-    jsonOutput.value = jsonString
-    jsonOutput.style.display = ''
-    jsonLabel.style.display = ''
+    if (!Array.isArray(data)) { statusMsg.textContent = 'Input must be a JSON array.'; return }
+    csvString = Papa.unparse(data)
+    csvOutput.value = csvString
+    csvOutput.style.display = ''
+    csvLabel.style.display = ''
     downloadBtn.disabled = false
-    copyBtn.disabled = false
-    statusMsg.textContent = `${result.data.length} row${result.data.length !== 1 ? 's' : ''} converted.`
+    statusMsg.textContent = `${data.length} row${data.length !== 1 ? 's' : ''} converted.`
   })
 
   downloadBtn.addEventListener('click', () => {
-    const blob = new Blob([jsonString], { type: 'application/json' })
+    const blob = new Blob([csvString], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
-    const a = document.createElement('a'); a.href = url; a.download = 'output.json'; a.click()
+    const a = document.createElement('a'); a.href = url; a.download = 'output.csv'; a.click()
     URL.revokeObjectURL(url)
   })
 
-  copyBtn.addEventListener('click', async () => {
-    await navigator.clipboard.writeText(jsonString)
-    const prev = copyBtn.textContent
-    copyBtn.textContent = 'Copied!'
-    setTimeout(() => { copyBtn.textContent = prev }, 1500)
-  })
-
   clearBtn.addEventListener('click', () => {
-    csvInput.value = ''; jsonOutput.value = ''; jsonOutput.style.display = 'none'
-    jsonLabel.style.display = 'none'; statusMsg.textContent = ''
-    downloadBtn.disabled = true; copyBtn.disabled = true
+    jsonInput.value = ''; csvOutput.value = ''; csvOutput.style.display = 'none'
+    csvLabel.style.display = 'none'; statusMsg.textContent = ''; downloadBtn.disabled = true
   })
 </script>
 

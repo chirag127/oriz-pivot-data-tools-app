@@ -1,17 +1,126 @@
 ---
 import BaseLayout from '~/layouts/BaseLayout.astro'
 ---
-<BaseLayout title="type-coerce columns — Oriz Pivot" description="type-coerce columns — runs in your browser. Part of Oriz Pivot.">
+<BaseLayout title="Type Coerce — Oriz Pivot" description="Detect and convert CSV column types: number, boolean, date, string. Runs in your browser.">
   <article class="tool">
     <p class="back mono"><a href="/">← all tools</a></p>
-    <h1 class="h1">type-coerce columns</h1>
-    <p class="status mono">coming · v0.1</p>
-    <p class="lede">
-      This feature is on the v0.1 roadmap. The page exists so we can iterate on
-      the design and copy in parallel; the implementation lands next sprint.
-    </p>
+    <h1 class="h1">Type Coerce</h1>
+    <p class="status mono ready">ready · v0.1</p>
+    <p class="lede">Paste CSV, see auto-detected types per column, optionally override, and download a typed JSON. Everything runs in your browser.</p>
+
+    <div class="controls">
+      <label class="label-text" for="csv-in">CSV:</label>
+      <textarea id="csv-in" class="io" rows="8" spellcheck="false" placeholder="name,age,signed_up,joined&#10;Alice,30,true,2024-01-15&#10;Bob,25,false,2024-02-03"></textarea>
+      <div class="btn-row">
+        <button id="parse-btn" class="btn primary">Detect &amp; coerce</button>
+        <button id="download-btn" class="btn" disabled>Download JSON</button>
+        <button id="clear-btn" class="btn">Clear</button>
+      </div>
+    </div>
+
+    <p id="status-msg" class="hint mono"></p>
+    <div id="types-wrap"></div>
+    <pre id="preview" class="preview" style="display:none"></pre>
   </article>
 </BaseLayout>
+
+<script>
+  function parseCSV(text: string): string[][] {
+    const rows: string[][] = [];
+    let cur = '', row: string[] = [], inQ = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inQ) {
+        if (c === '"' && text[i + 1] === '"') { cur += '"'; i++; }
+        else if (c === '"') inQ = false;
+        else cur += c;
+      } else {
+        if (c === '"') inQ = true;
+        else if (c === ',') { row.push(cur); cur = ''; }
+        else if (c === '\n' || c === '\r') {
+          if (c === '\r' && text[i + 1] === '\n') i++;
+          row.push(cur); rows.push(row); row = []; cur = '';
+        } else cur += c;
+      }
+    }
+    if (cur.length || row.length) { row.push(cur); rows.push(row); }
+    return rows.filter(r => r.length > 1 || (r.length === 1 && r[0] !== ''));
+  }
+
+  type T = 'number' | 'boolean' | 'date' | 'string';
+  const ISO_DATE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+
+  function detect(values: string[]): T {
+    const non = values.filter(v => v !== '');
+    if (!non.length) return 'string';
+    if (non.every(v => /^(true|false)$/i.test(v))) return 'boolean';
+    if (non.every(v => !isNaN(Number(v)) && v.trim() !== '')) return 'number';
+    if (non.every(v => ISO_DATE.test(v) || !Number.isNaN(Date.parse(v)))) return 'date';
+    return 'string';
+  }
+
+  function coerce(v: string, t: T): unknown {
+    if (v === '') return null;
+    if (t === 'number') { const n = Number(v); return Number.isFinite(n) ? n : v; }
+    if (t === 'boolean') return /^true$/i.test(v);
+    if (t === 'date') { const d = new Date(v); return Number.isNaN(d.getTime()) ? v : d.toISOString(); }
+    return v;
+  }
+
+  const csvIn = document.getElementById('csv-in') as HTMLTextAreaElement;
+  const parseBtn = document.getElementById('parse-btn') as HTMLButtonElement;
+  const downloadBtn = document.getElementById('download-btn') as HTMLButtonElement;
+  const clearBtn = document.getElementById('clear-btn') as HTMLButtonElement;
+  const typesWrap = document.getElementById('types-wrap') as HTMLDivElement;
+  const preview = document.getElementById('preview') as HTMLPreElement;
+  const statusMsg = document.getElementById('status-msg') as HTMLParagraphElement;
+
+  let headers: string[] = [], rows: string[][] = [], types: T[] = [], typed: Record<string, unknown>[] = [];
+
+  function refresh() {
+    typed = rows.map(r => Object.fromEntries(headers.map((h, i) => [h, coerce(r[i] ?? '', types[i])])));
+    preview.textContent = JSON.stringify(typed.slice(0, 20), null, 2) + (typed.length > 20 ? `\n... (${typed.length - 20} more rows)` : '');
+    preview.style.display = '';
+    downloadBtn.disabled = false;
+  }
+
+  parseBtn.addEventListener('click', () => {
+    try {
+      const data = parseCSV(csvIn.value.trim());
+      if (data.length < 2) { statusMsg.textContent = 'Need header row + at least one data row.'; return; }
+      headers = data[0]; rows = data.slice(1);
+      types = headers.map((_, i) => detect(rows.map(r => r[i] ?? '')));
+      typesWrap.innerHTML = '';
+      headers.forEach((h, i) => {
+        const wrap = document.createElement('div'); wrap.className = 'type-row';
+        const lbl = document.createElement('span'); lbl.className = 'col-name'; lbl.textContent = h;
+        const sel = document.createElement('select'); sel.className = 'io type-sel';
+        (['string','number','boolean','date'] as T[]).forEach(t => {
+          const o = document.createElement('option'); o.value = t; o.textContent = t;
+          if (t === types[i]) o.selected = true;
+          sel.appendChild(o);
+        });
+        sel.addEventListener('change', () => { types[i] = sel.value as T; refresh(); });
+        wrap.appendChild(lbl); wrap.appendChild(sel); typesWrap.appendChild(wrap);
+      });
+      statusMsg.textContent = `${rows.length} rows, ${headers.length} columns. Types auto-detected.`;
+      refresh();
+    } catch (e: unknown) {
+      statusMsg.textContent = 'Parse error: ' + (e instanceof Error ? e.message : String(e));
+    }
+  });
+
+  downloadBtn.addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(typed, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'typed.json'; a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  clearBtn.addEventListener('click', () => {
+    csvIn.value = ''; typesWrap.innerHTML = ''; preview.style.display = 'none'; statusMsg.textContent = ''; downloadBtn.disabled = true;
+  });
+</script>
 
 <style>
   .tool { padding-block: 0 2rem; }
@@ -21,18 +130,20 @@ import BaseLayout from '~/layouts/BaseLayout.astro'
   .h1 { font-family: var(--font-display); font-weight: 600; font-size: clamp(1.75rem, 4vw, 2.5rem); margin: 0 0 0.5rem; line-height: 1.1; }
   .status { font-size: 11px; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 2rem; }
   .status.ready { color: var(--accent); }
-  .lede { font-size: 1rem; color: var(--muted); line-height: 1.6; max-width: 56ch; }
-  .placeholder { max-width: 60ch; }
-  .placeholder p { color: var(--muted); margin: 0 0 1rem; }
-  .io {
-    width: 100%;
-    padding: 1rem;
-    background: var(--paper-2);
-    border: 1px solid var(--rule);
-    color: var(--ink);
-    font-family: var(--font-mono);
-    font-size: 0.875rem;
-    resize: vertical;
-  }
-  .hint { font-size: 11px; color: var(--muted); margin-top: 0.75rem; }
+  .lede { font-size: 1rem; color: var(--muted); line-height: 1.6; max-width: 56ch; margin: 0 0 1.5rem; }
+  .label-text { font-size: 0.875rem; color: var(--muted); margin-bottom: 0.25rem; display: block; }
+  .controls { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem; }
+  .io { width: 100%; padding: 0.875rem; background: var(--paper-2); border: 1px solid var(--rule); color: var(--ink); font-family: var(--font-mono); font-size: 0.8125rem; resize: vertical; }
+  .io:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .btn { padding: 0.5rem 1rem; border: 1px solid var(--rule); background: var(--paper-2); color: var(--ink); font-family: var(--font-display); font-size: 0.875rem; cursor: pointer; }
+  .btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.primary:hover { opacity: 0.85; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .type-row { display: flex; align-items: center; gap: 0.75rem; padding: 0.4rem 0; border-bottom: 1px solid var(--rule); }
+  .col-name { font-family: var(--font-mono); font-size: 0.875rem; flex: 1; }
+  .type-sel { width: 140px; padding: 0.4rem 0.5rem; }
+  .preview { background: var(--paper-2); border: 1px solid var(--rule); padding: 0.875rem; font-family: var(--font-mono); font-size: 0.8125rem; overflow-x: auto; margin-top: 1rem; max-height: 480px; overflow-y: auto; }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 0.5rem; }
 </style>

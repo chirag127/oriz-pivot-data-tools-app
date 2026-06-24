@@ -1,17 +1,145 @@
 ---
 import BaseLayout from '~/layouts/BaseLayout.astro'
 ---
-<BaseLayout title="chart (ECharts) — Oriz Pivot" description="chart (ECharts) — runs in your browser. Part of Oriz Pivot.">
+<BaseLayout title="Quick Chart — Oriz Pivot" description="Paste CSV, plot a bar or line chart inline. Runs in your browser.">
   <article class="tool">
     <p class="back mono"><a href="/">← all tools</a></p>
-    <h1 class="h1">chart (ECharts)</h1>
-    <p class="status mono">coming · v0.1</p>
-    <p class="lede">
-      This feature is on the v0.1 roadmap. The page exists so we can iterate on
-      the design and copy in parallel; the implementation lands next sprint.
-    </p>
+    <h1 class="h1">Quick Chart</h1>
+    <p class="status mono ready">ready · v0.1</p>
+    <p class="lede">Paste CSV with a header row, pick a label column and a numeric column, get a bar or line chart drawn inline as SVG.</p>
+
+    <div class="controls">
+      <label class="label-text" for="csv-in">CSV:</label>
+      <textarea id="csv-in" class="io" rows="8" spellcheck="false" placeholder="month,revenue&#10;Jan,120&#10;Feb,180&#10;Mar,210&#10;Apr,170"></textarea>
+      <div class="btn-row">
+        <button id="parse-btn" class="btn primary">Plot</button>
+        <button id="clear-btn" class="btn">Clear</button>
+      </div>
+    </div>
+
+    <div id="pick-row" class="pick-row" style="display:none">
+      <div>
+        <label class="label-text" for="label-pick">Labels:</label>
+        <select id="label-pick" class="io"></select>
+      </div>
+      <div>
+        <label class="label-text" for="value-pick">Values:</label>
+        <select id="value-pick" class="io"></select>
+      </div>
+      <div>
+        <label class="label-text" for="type-pick">Type:</label>
+        <select id="type-pick" class="io">
+          <option value="bar">bar</option>
+          <option value="line">line</option>
+        </select>
+      </div>
+    </div>
+
+    <p id="status-msg" class="hint mono"></p>
+    <div id="chart-wrap" class="chart-wrap"></div>
   </article>
 </BaseLayout>
+
+<script>
+  function parseCSV(text: string): string[][] {
+    const rows: string[][] = [];
+    let cur = '', row: string[] = [], inQ = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inQ) {
+        if (c === '"' && text[i + 1] === '"') { cur += '"'; i++; }
+        else if (c === '"') inQ = false;
+        else cur += c;
+      } else {
+        if (c === '"') inQ = true;
+        else if (c === ',') { row.push(cur); cur = ''; }
+        else if (c === '\n' || c === '\r') {
+          if (c === '\r' && text[i + 1] === '\n') i++;
+          row.push(cur); rows.push(row); row = []; cur = '';
+        } else cur += c;
+      }
+    }
+    if (cur.length || row.length) { row.push(cur); rows.push(row); }
+    return rows.filter(r => r.length > 1 || (r.length === 1 && r[0] !== ''));
+  }
+
+  const csvIn = document.getElementById('csv-in') as HTMLTextAreaElement;
+  const parseBtn = document.getElementById('parse-btn') as HTMLButtonElement;
+  const clearBtn = document.getElementById('clear-btn') as HTMLButtonElement;
+  const pickRow = document.getElementById('pick-row') as HTMLDivElement;
+  const labelPick = document.getElementById('label-pick') as HTMLSelectElement;
+  const valuePick = document.getElementById('value-pick') as HTMLSelectElement;
+  const typePick = document.getElementById('type-pick') as HTMLSelectElement;
+  const statusMsg = document.getElementById('status-msg') as HTMLParagraphElement;
+  const chartWrap = document.getElementById('chart-wrap') as HTMLDivElement;
+
+  let headers: string[] = [], rows: string[][] = [];
+
+  function draw() {
+    const li = Number(labelPick.value), vi = Number(valuePick.value);
+    const labels = rows.map(r => r[li] ?? '');
+    const values = rows.map(r => Number(r[vi])).map(n => Number.isFinite(n) ? n : 0);
+    if (!values.length) { chartWrap.innerHTML = ''; return; }
+    const W = 720, H = 360, PAD = 48;
+    const max = Math.max(...values, 0), min = Math.min(...values, 0);
+    const range = (max - min) || 1;
+    const xStep = (W - PAD * 2) / Math.max(values.length - (typePick.value === 'line' ? 1 : 0), 1);
+    const scaleY = (v: number) => H - PAD - ((v - min) / range) * (H - PAD * 2);
+
+    let body = '';
+    const baselineY = scaleY(0);
+    body += `<line x1="${PAD}" y1="${baselineY}" x2="${W - PAD}" y2="${baselineY}" stroke="#15140f33" />`;
+    body += `<text x="${PAD - 6}" y="${scaleY(max)}" text-anchor="end" font-size="11" fill="#15140fcc">${max}</text>`;
+    body += `<text x="${PAD - 6}" y="${scaleY(min) + 4}" text-anchor="end" font-size="11" fill="#15140fcc">${min}</text>`;
+
+    if (typePick.value === 'bar') {
+      const barW = Math.max(xStep * 0.7, 1);
+      values.forEach((v, i) => {
+        const x = PAD + i * xStep + (xStep - barW) / 2;
+        const y = v >= 0 ? scaleY(v) : baselineY;
+        const h = Math.abs(scaleY(v) - baselineY);
+        body += `<rect x="${x}" y="${y}" width="${barW}" height="${h}" fill="#c1440e"><title>${labels[i]}: ${v}</title></rect>`;
+        if (values.length <= 24) body += `<text x="${x + barW / 2}" y="${H - PAD + 14}" text-anchor="middle" font-size="10" fill="#15140fcc">${labels[i]}</text>`;
+      });
+    } else {
+      const pts = values.map((v, i) => `${PAD + i * xStep},${scaleY(v)}`).join(' ');
+      body += `<polyline points="${pts}" fill="none" stroke="#c1440e" stroke-width="2" />`;
+      values.forEach((v, i) => {
+        const x = PAD + i * xStep, y = scaleY(v);
+        body += `<circle cx="${x}" cy="${y}" r="3" fill="#c1440e"><title>${labels[i]}: ${v}</title></circle>`;
+        if (values.length <= 24) body += `<text x="${x}" y="${H - PAD + 14}" text-anchor="middle" font-size="10" fill="#15140fcc">${labels[i]}</text>`;
+      });
+    }
+
+    chartWrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="chart">${body}</svg>`;
+  }
+
+  parseBtn.addEventListener('click', () => {
+    try {
+      const data = parseCSV(csvIn.value.trim());
+      if (data.length < 2) { statusMsg.textContent = 'Need header row + at least one data row.'; return; }
+      [headers, ...rows] = [data[0], ...data.slice(1)];
+      labelPick.innerHTML = ''; valuePick.innerHTML = '';
+      headers.forEach((h, i) => {
+        const o1 = document.createElement('option'); o1.value = String(i); o1.textContent = h || `col ${i}`; labelPick.appendChild(o1);
+        const o2 = o1.cloneNode(true) as HTMLOptionElement; valuePick.appendChild(o2);
+      });
+      labelPick.value = '0';
+      valuePick.value = String(Math.min(1, headers.length - 1));
+      pickRow.style.display = '';
+      statusMsg.textContent = `${rows.length} rows plotted.`;
+      draw();
+    } catch (e: unknown) {
+      statusMsg.textContent = 'Parse error: ' + (e instanceof Error ? e.message : String(e));
+    }
+  });
+
+  [labelPick, valuePick, typePick].forEach(s => s.addEventListener('change', draw));
+
+  clearBtn.addEventListener('click', () => {
+    csvIn.value = ''; pickRow.style.display = 'none'; chartWrap.innerHTML = ''; statusMsg.textContent = '';
+  });
+</script>
 
 <style>
   .tool { padding-block: 0 2rem; }
@@ -21,18 +149,19 @@ import BaseLayout from '~/layouts/BaseLayout.astro'
   .h1 { font-family: var(--font-display); font-weight: 600; font-size: clamp(1.75rem, 4vw, 2.5rem); margin: 0 0 0.5rem; line-height: 1.1; }
   .status { font-size: 11px; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 2rem; }
   .status.ready { color: var(--accent); }
-  .lede { font-size: 1rem; color: var(--muted); line-height: 1.6; max-width: 56ch; }
-  .placeholder { max-width: 60ch; }
-  .placeholder p { color: var(--muted); margin: 0 0 1rem; }
-  .io {
-    width: 100%;
-    padding: 1rem;
-    background: var(--paper-2);
-    border: 1px solid var(--rule);
-    color: var(--ink);
-    font-family: var(--font-mono);
-    font-size: 0.875rem;
-    resize: vertical;
-  }
-  .hint { font-size: 11px; color: var(--muted); margin-top: 0.75rem; }
+  .lede { font-size: 1rem; color: var(--muted); line-height: 1.6; max-width: 56ch; margin: 0 0 1.5rem; }
+  .label-text { font-size: 0.875rem; color: var(--muted); margin-bottom: 0.25rem; display: block; }
+  .controls { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem; }
+  .pick-row { display: flex; gap: 1rem; flex-wrap: wrap; margin: 0 0 1rem; }
+  .pick-row > div { flex: 1; min-width: 140px; }
+  .io { width: 100%; padding: 0.875rem; background: var(--paper-2); border: 1px solid var(--rule); color: var(--ink); font-family: var(--font-mono); font-size: 0.8125rem; resize: vertical; }
+  .io:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .btn { padding: 0.5rem 1rem; border: 1px solid var(--rule); background: var(--paper-2); color: var(--ink); font-family: var(--font-display); font-size: 0.875rem; cursor: pointer; }
+  .btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.primary:hover { opacity: 0.85; }
+  .chart-wrap { margin-top: 1rem; background: var(--paper-2); border: 1px solid var(--rule); padding: 1rem; }
+  .chart-wrap svg { width: 100%; height: auto; display: block; }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 0.5rem; }
 </style>

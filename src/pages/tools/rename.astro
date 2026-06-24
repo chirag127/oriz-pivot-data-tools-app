@@ -1,17 +1,87 @@
 ---
 import BaseLayout from '~/layouts/BaseLayout.astro'
 ---
-<BaseLayout title="rename columns — Oriz Pivot" description="rename columns — runs in your browser. Part of Oriz Pivot.">
+<BaseLayout title="Rename Columns — Oriz Pivot" description="Bulk rename CSV column headers. Runs in your browser.">
   <article class="tool">
     <p class="back mono"><a href="/">← all tools</a></p>
-    <h1 class="h1">rename columns</h1>
-    <p class="status mono">coming · v0.1</p>
-    <p class="lede">
-      This feature is on the v0.1 roadmap. The page exists so we can iterate on
-      the design and copy in parallel; the implementation lands next sprint.
-    </p>
+    <h1 class="h1">Rename Columns</h1>
+    <p class="status mono ready">ready · v0.1</p>
+    <p class="lede">Paste CSV, edit each column header in place, download the renamed CSV. Body rows are untouched.</p>
+
+    <div class="controls">
+      <label class="label-text" for="csv-in">CSV:</label>
+      <textarea id="csv-in" class="io" rows="8" spellcheck="false" placeholder="name,age,city&#10;Alice,30,NYC&#10;Bob,25,LA"></textarea>
+      <div class="btn-row">
+        <button id="parse-btn" class="btn primary">Load headers</button>
+        <button id="download-btn" class="btn" disabled>Download CSV</button>
+        <button id="clear-btn" class="btn">Clear</button>
+      </div>
+    </div>
+
+    <div id="rename-wrap"></div>
+    <p id="status-msg" class="hint mono"></p>
   </article>
 </BaseLayout>
+
+<script>
+  function parseCSV(text: string): string[][] {
+    const rows: string[][] = [];
+    let cur = '', row: string[] = [], inQ = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inQ) { if (c === '"' && text[i+1] === '"') { cur += '"'; i++; } else if (c === '"') inQ = false; else cur += c; }
+      else { if (c === '"') inQ = true; else if (c === ',') { row.push(cur); cur=''; } else if (c==='\n'||c==='\r') { if(c==='\r'&&text[i+1]==='\n')i++; row.push(cur); rows.push(row); row=[]; cur=''; } else cur+=c; }
+    }
+    if (cur.length || row.length) { row.push(cur); rows.push(row); }
+    return rows.filter(r => r.length > 1 || (r.length === 1 && r[0] !== ''));
+  }
+  function csvOut(rows: string[][]): string {
+    return rows.map(r => r.map(c => /[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c).join(',')).join('\n');
+  }
+
+  const csvIn = document.getElementById('csv-in') as HTMLTextAreaElement;
+  const parseBtn = document.getElementById('parse-btn') as HTMLButtonElement;
+  const downloadBtn = document.getElementById('download-btn') as HTMLButtonElement;
+  const clearBtn = document.getElementById('clear-btn') as HTMLButtonElement;
+  const renameWrap = document.getElementById('rename-wrap') as HTMLDivElement;
+  const statusMsg = document.getElementById('status-msg') as HTMLParagraphElement;
+
+  let headers: string[] = [], rows: string[][] = [], newNames: string[] = [];
+
+  parseBtn.addEventListener('click', () => {
+    try {
+      const data = parseCSV(csvIn.value.trim());
+      if (data.length < 1) { statusMsg.textContent = 'Need at least a header row.'; return; }
+      headers = data[0]; rows = data.slice(1); newNames = [...headers];
+      renameWrap.innerHTML = '';
+      headers.forEach((h, i) => {
+        const wrap = document.createElement('div'); wrap.className = 'rename-row';
+        const old = document.createElement('span'); old.className = 'old-name'; old.textContent = h;
+        const arrow = document.createElement('span'); arrow.className = 'arrow mono'; arrow.textContent = '→';
+        const input = document.createElement('input'); input.type = 'text'; input.className = 'io rename-input'; input.value = h;
+        input.addEventListener('input', () => { newNames[i] = input.value; });
+        wrap.appendChild(old); wrap.appendChild(arrow); wrap.appendChild(input);
+        renameWrap.appendChild(wrap);
+      });
+      downloadBtn.disabled = false;
+      statusMsg.textContent = `${headers.length} columns loaded. Edit names then download.`;
+    } catch (e: unknown) {
+      statusMsg.textContent = 'Parse error: ' + (e instanceof Error ? e.message : String(e));
+    }
+  });
+
+  downloadBtn.addEventListener('click', () => {
+    const out = [newNames, ...rows];
+    const blob = new Blob([csvOut(out)], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'renamed.csv'; a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  clearBtn.addEventListener('click', () => {
+    csvIn.value = ''; renameWrap.innerHTML = ''; statusMsg.textContent = ''; downloadBtn.disabled = true;
+  });
+</script>
 
 <style>
   .tool { padding-block: 0 2rem; }
@@ -21,18 +91,20 @@ import BaseLayout from '~/layouts/BaseLayout.astro'
   .h1 { font-family: var(--font-display); font-weight: 600; font-size: clamp(1.75rem, 4vw, 2.5rem); margin: 0 0 0.5rem; line-height: 1.1; }
   .status { font-size: 11px; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 2rem; }
   .status.ready { color: var(--accent); }
-  .lede { font-size: 1rem; color: var(--muted); line-height: 1.6; max-width: 56ch; }
-  .placeholder { max-width: 60ch; }
-  .placeholder p { color: var(--muted); margin: 0 0 1rem; }
-  .io {
-    width: 100%;
-    padding: 1rem;
-    background: var(--paper-2);
-    border: 1px solid var(--rule);
-    color: var(--ink);
-    font-family: var(--font-mono);
-    font-size: 0.875rem;
-    resize: vertical;
-  }
-  .hint { font-size: 11px; color: var(--muted); margin-top: 0.75rem; }
+  .lede { font-size: 1rem; color: var(--muted); line-height: 1.6; max-width: 56ch; margin: 0 0 1.5rem; }
+  .label-text { font-size: 0.875rem; color: var(--muted); margin-bottom: 0.25rem; display: block; }
+  .controls { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem; }
+  .io { width: 100%; padding: 0.875rem; background: var(--paper-2); border: 1px solid var(--rule); color: var(--ink); font-family: var(--font-mono); font-size: 0.8125rem; resize: vertical; }
+  .io:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .btn { padding: 0.5rem 1rem; border: 1px solid var(--rule); background: var(--paper-2); color: var(--ink); font-family: var(--font-display); font-size: 0.875rem; cursor: pointer; }
+  .btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.primary:hover { opacity: 0.85; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .rename-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0; }
+  .old-name { font-family: var(--font-mono); font-size: 0.875rem; flex: 1; color: var(--muted); }
+  .arrow { color: var(--muted); }
+  .rename-input { flex: 1; padding: 0.4rem 0.5rem; width: auto; }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 0.5rem; }
 </style>

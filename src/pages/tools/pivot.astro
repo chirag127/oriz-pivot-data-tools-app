@@ -1,17 +1,145 @@
 ---
 import BaseLayout from '~/layouts/BaseLayout.astro'
 ---
-<BaseLayout title="pivot table — Oriz Pivot" description="pivot table — runs in your browser. Part of Oriz Pivot.">
+<BaseLayout title="Pivot Table — Oriz Pivot" description="Build a pivot table from CSV: row / column / value / aggregate. Runs in your browser.">
   <article class="tool">
     <p class="back mono"><a href="/">← all tools</a></p>
-    <h1 class="h1">pivot table</h1>
-    <p class="status mono">coming · v0.1</p>
-    <p class="lede">
-      This feature is on the v0.1 roadmap. The page exists so we can iterate on
-      the design and copy in parallel; the implementation lands next sprint.
-    </p>
+    <h1 class="h1">Pivot Table</h1>
+    <p class="status mono ready">ready · v0.1</p>
+    <p class="lede">Pick row dimension, column dimension, value, aggregation. Pivot table is rendered as a downloadable matrix.</p>
+
+    <div class="controls">
+      <label class="label-text" for="csv-in">CSV:</label>
+      <textarea id="csv-in" class="io" rows="8" spellcheck="false" placeholder="region,quarter,sales&#10;US,Q1,120&#10;US,Q2,140&#10;EU,Q1,90&#10;EU,Q2,180"></textarea>
+      <div class="btn-row">
+        <button id="parse-btn" class="btn primary">Pivot</button>
+        <button id="download-btn" class="btn" disabled>Download CSV</button>
+        <button id="clear-btn" class="btn">Clear</button>
+      </div>
+    </div>
+
+    <div id="pick-row" class="pick-row" style="display:none">
+      <div><label class="label-text" for="row-pick">Rows:</label><select id="row-pick" class="io"></select></div>
+      <div><label class="label-text" for="col-pick">Columns:</label><select id="col-pick" class="io"></select></div>
+      <div><label class="label-text" for="val-pick">Values:</label><select id="val-pick" class="io"></select></div>
+      <div><label class="label-text" for="agg-pick">Aggregate:</label>
+        <select id="agg-pick" class="io">
+          <option value="sum">sum</option>
+          <option value="count">count</option>
+          <option value="avg">avg</option>
+          <option value="min">min</option>
+          <option value="max">max</option>
+        </select>
+      </div>
+    </div>
+
+    <p id="status-msg" class="hint mono"></p>
+    <div id="table-wrap" class="table-wrap"></div>
   </article>
 </BaseLayout>
+
+<script>
+  function parseCSV(text: string): string[][] {
+    const rows: string[][] = [];
+    let cur = '', row: string[] = [], inQ = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inQ) { if (c === '"' && text[i+1] === '"') { cur += '"'; i++; } else if (c === '"') inQ = false; else cur += c; }
+      else { if (c === '"') inQ = true; else if (c === ',') { row.push(cur); cur=''; } else if (c==='\n'||c==='\r') { if(c==='\r'&&text[i+1]==='\n')i++; row.push(cur); rows.push(row); row=[]; cur=''; } else cur+=c; }
+    }
+    if (cur.length || row.length) { row.push(cur); rows.push(row); }
+    return rows.filter(r => r.length > 1 || (r.length === 1 && r[0] !== ''));
+  }
+  function csvOut(rows: string[][]): string {
+    return rows.map(r => r.map(c => /[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c).join(',')).join('\n');
+  }
+
+  const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+  const csvIn = $<HTMLTextAreaElement>('csv-in');
+  const parseBtn = $<HTMLButtonElement>('parse-btn');
+  const downloadBtn = $<HTMLButtonElement>('download-btn');
+  const clearBtn = $<HTMLButtonElement>('clear-btn');
+  const pickRow = $<HTMLDivElement>('pick-row');
+  const rowPick = $<HTMLSelectElement>('row-pick');
+  const colPick = $<HTMLSelectElement>('col-pick');
+  const valPick = $<HTMLSelectElement>('val-pick');
+  const aggPick = $<HTMLSelectElement>('agg-pick');
+  const tableWrap = $<HTMLDivElement>('table-wrap');
+  const statusMsg = $<HTMLParagraphElement>('status-msg');
+
+  let headers: string[] = [], rows: string[][] = [], outRows: string[][] = [];
+
+  function run() {
+    const ri = Number(rowPick.value), ci = Number(colPick.value), vi = Number(valPick.value), agg = aggPick.value;
+    const rowKeys = new Set<string>(), colKeys = new Set<string>();
+    const buckets = new Map<string, number[]>();
+    for (const r of rows) {
+      const rk = r[ri] ?? '', ck = r[ci] ?? '';
+      rowKeys.add(rk); colKeys.add(ck);
+      const n = Number(r[vi]);
+      const k = rk + '\x00' + ck;
+      if (!buckets.has(k)) buckets.set(k, []);
+      if (Number.isFinite(n)) buckets.get(k)!.push(n);
+    }
+    const rk = [...rowKeys].sort(), ck = [...colKeys].sort();
+    const header = [headers[ri], ...ck];
+    outRows = [header];
+    const fmt = (n: number) => Number.isInteger(n) ? String(n) : n.toFixed(4).replace(/\.?0+$/, '');
+    for (const r of rk) {
+      const out: string[] = [r];
+      for (const c of ck) {
+        const arr = buckets.get(r + '\x00' + c) ?? [];
+        let v: number | '' = '';
+        if (agg === 'count') v = arr.length || 0;
+        else if (!arr.length) v = '';
+        else if (agg === 'sum') v = arr.reduce((a,b)=>a+b,0);
+        else if (agg === 'avg') v = arr.reduce((a,b)=>a+b,0)/arr.length;
+        else if (agg === 'min') v = Math.min(...arr);
+        else v = Math.max(...arr);
+        out.push(v === '' ? '' : fmt(v as number));
+      }
+      outRows.push(out);
+    }
+    const tbl = document.createElement('table'); tbl.className = 'data-table';
+    const thead = document.createElement('thead'); const trh = document.createElement('tr');
+    header.forEach(h => { const th = document.createElement('th'); th.textContent = h; trh.appendChild(th); });
+    thead.appendChild(trh); tbl.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    outRows.slice(1).forEach(r => { const tr = document.createElement('tr'); r.forEach(c => { const td = document.createElement('td'); td.textContent = c; tr.appendChild(td); }); tbody.appendChild(tr); });
+    tbl.appendChild(tbody);
+    tableWrap.innerHTML = ''; tableWrap.appendChild(tbl);
+    statusMsg.textContent = `${rk.length} × ${ck.length} pivot.`;
+    downloadBtn.disabled = false;
+  }
+
+  parseBtn.addEventListener('click', () => {
+    try {
+      const data = parseCSV(csvIn.value.trim());
+      if (data.length < 2) { statusMsg.textContent = 'Need header row + at least one data row.'; return; }
+      headers = data[0]; rows = data.slice(1);
+      if (headers.length < 3) { statusMsg.textContent = 'Need at least 3 columns (rows / cols / value).'; return; }
+      [rowPick, colPick, valPick].forEach(s => { s.innerHTML = ''; headers.forEach((h, i) => { const o = document.createElement('option'); o.value = String(i); o.textContent = h; s.appendChild(o); }); });
+      rowPick.value = '0'; colPick.value = '1'; valPick.value = '2';
+      pickRow.style.display = '';
+      run();
+    } catch (e: unknown) {
+      statusMsg.textContent = 'Parse error: ' + (e instanceof Error ? e.message : String(e));
+    }
+  });
+
+  [rowPick, colPick, valPick, aggPick].forEach(s => s.addEventListener('change', () => { if (rows.length) run(); }));
+
+  downloadBtn.addEventListener('click', () => {
+    const blob = new Blob([csvOut(outRows)], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'pivot.csv'; a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  clearBtn.addEventListener('click', () => {
+    csvIn.value = ''; tableWrap.innerHTML = ''; pickRow.style.display = 'none'; statusMsg.textContent = ''; downloadBtn.disabled = true;
+  });
+</script>
 
 <style>
   .tool { padding-block: 0 2rem; }
@@ -21,18 +149,22 @@ import BaseLayout from '~/layouts/BaseLayout.astro'
   .h1 { font-family: var(--font-display); font-weight: 600; font-size: clamp(1.75rem, 4vw, 2.5rem); margin: 0 0 0.5rem; line-height: 1.1; }
   .status { font-size: 11px; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 2rem; }
   .status.ready { color: var(--accent); }
-  .lede { font-size: 1rem; color: var(--muted); line-height: 1.6; max-width: 56ch; }
-  .placeholder { max-width: 60ch; }
-  .placeholder p { color: var(--muted); margin: 0 0 1rem; }
-  .io {
-    width: 100%;
-    padding: 1rem;
-    background: var(--paper-2);
-    border: 1px solid var(--rule);
-    color: var(--ink);
-    font-family: var(--font-mono);
-    font-size: 0.875rem;
-    resize: vertical;
-  }
-  .hint { font-size: 11px; color: var(--muted); margin-top: 0.75rem; }
+  .lede { font-size: 1rem; color: var(--muted); line-height: 1.6; max-width: 56ch; margin: 0 0 1.5rem; }
+  .label-text { font-size: 0.875rem; color: var(--muted); margin-bottom: 0.25rem; display: block; }
+  .controls { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem; }
+  .pick-row { display: flex; gap: 1rem; flex-wrap: wrap; margin: 0 0 1rem; }
+  .pick-row > div { flex: 1; min-width: 140px; }
+  .io { width: 100%; padding: 0.875rem; background: var(--paper-2); border: 1px solid var(--rule); color: var(--ink); font-family: var(--font-mono); font-size: 0.8125rem; resize: vertical; }
+  .io:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .btn { padding: 0.5rem 1rem; border: 1px solid var(--rule); background: var(--paper-2); color: var(--ink); font-family: var(--font-display); font-size: 0.875rem; cursor: pointer; }
+  .btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.primary:hover { opacity: 0.85; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .table-wrap { overflow-x: auto; margin-top: 1rem; }
+  .data-table { border-collapse: collapse; min-width: 100%; font-size: 0.875rem; }
+  .data-table th, .data-table td { border: 1px solid var(--rule); padding: 0.4rem 0.75rem; text-align: left; white-space: nowrap; }
+  .data-table th { background: var(--paper-2); font-weight: 600; }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 0.5rem; }
 </style>
